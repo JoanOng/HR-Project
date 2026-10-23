@@ -339,10 +339,11 @@ model Payslip {
   @@index([employeeId, year, month])
 }
 
-// One run per PayMonth, versioned snapshot. Idempotency is a UNIQUE index on
-// (year, month, activeRun) where activeRun = 1 for any non-VOIDED run — a
-// second non-voided run for the same month is a constraint violation, not a
-// code check.
+// One active run per month, enforced by a partial unique index on
+// (year, month) WHERE activeRun = 1 — a second non-voided run for the same
+// month is a constraint violation, not a code check. Prisma can't express
+// partial indexes in the schema, so the index is defined in the migration
+// (20261022165911_payroll_engine) and kept in sync by hand.
 model PayrollRun {
   id            String        @id // ulid
   year          Int

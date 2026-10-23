@@ -78,4 +78,4 @@ CREATE UNIQUE INDEX "Payslip_runId_employeeId_key" ON "Payslip"("runId", "employ
 CREATE INDEX "PayrollRun_status_idx" ON "PayrollRun"("status");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "PayrollRun_year_month_activeRun_key" ON "PayrollRun"("year", "month", "activeRun");
+CREATE UNIQUE INDEX "PayrollRun_one_active_per_month" ON "PayrollRun"("year", "month") WHERE "activeRun" = 1;

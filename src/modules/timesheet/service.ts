@@ -369,3 +369,61 @@ export async function reviewPeriod(periodId: string, decision: "APPROVED" | "REJ
   });
   await writeAudit(actorId, "TimesheetPeriod", periodId, decision, { status: "SUBMITTED" }, { status: decision, comment }, loaded.period.employeeId);
 }
+
+// ---------- M5: dashboard helpers ----------
+
+function periodEmpIds(scope: Scope): string[] | undefined {
+  switch (scope.type) {
+    case "all": return undefined;
+    case "self": return scope.employeeId ? [scope.employeeId] : [];
+    case "reports": return scope.employeeIds;
+  }
+}
+
+/** The caller's current half-month period with entry count, or null if none exists yet. */
+export async function getCurrentPeriod(scope: Scope) {
+  const ids = periodEmpIds(scope);
+  if (ids && ids.length === 0) return null;
+  const now = new Date();
+  const p = await prisma.timesheetPeriod.findFirst({
+    where: {
+      ...(ids ? { employeeId: { in: ids } } : {}),
+      start: { lte: now },
+      end: { gte: now },
+    },
+    include: { _count: { select: { entries: true } } },
+  });
+  if (!p) return null;
+  const days = Math.round((p.end.getTime() - p.start.getTime()) / 86400000) + 1;
+  return {
+    id: p.id,
+    start: p.start.toISOString().slice(0, 10),
+    end: p.end.toISOString().slice(0, 10),
+    status: p.status,
+    entryCount: p._count.entries,
+    days,
+  };
+}
+
+/** Submissions waiting for review — for managers (their reports) and HR (all). */
+export async function pendingTimesheets(scope: Scope, excludeEmployeeId?: string) {
+  if (scope.type === "self") return [];
+  const ids = scope.type === "all" ? undefined : scope.employeeIds;
+  const rows = await prisma.timesheetPeriod.findMany({
+    where: {
+      status: "SUBMITTED",
+      ...(ids ? { employeeId: { in: ids } } : {}),
+      ...(excludeEmployeeId ? { employeeId: { not: excludeEmployeeId } } : {}),
+    },
+    include: { employee: { select: { employeeNumber: true, firstName: true, lastName: true } } },
+    orderBy: { start: "desc" },
+    take: 20,
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    employeeNumber: r.employee.employeeNumber,
+    employeeName: `${r.employee.firstName} ${r.employee.lastName}`,
+    start: r.start.toISOString().slice(0, 10),
+    end: r.end.toISOString().slice(0, 10),
+  }));
+}

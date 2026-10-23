@@ -33,6 +33,10 @@ export default async function EmployeesPage() {
             Payroll
           </Link>
           
+          <Link href="/dashboard" className="rounded border border-zinc-300 px-3 py-1.5 text-sm hover:bg-zinc-100">
+            Dashboard
+          </Link>
+
           {user.role === "HR" && (
             <Link href="/employees/new" className="rounded bg-zinc-900 px-3 py-1.5 text-sm text-white">
               + New employee

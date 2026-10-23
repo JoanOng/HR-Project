@@ -43,6 +43,9 @@ export default async function LeavePage() {
           <Link href="/payroll" className="rounded border border-zinc-300 px-3 py-1.5 text-sm hover:bg-zinc-100">
             Payroll
           </Link>
+          <Link href="/dashboard" className="rounded border border-zinc-300 px-3 py-1.5 text-sm hover:bg-zinc-100">
+            Dashboard
+          </Link>
           <LogoutButton />
         </div>
       </div>

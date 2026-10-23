@@ -177,3 +177,25 @@ export async function getPayslip(payslipId: string, actor: RunActor) {
     lines: p.lines,
   };
 }
+
+// ---------- M5: dashboard ----------
+
+/** An employee's published payslips, most recent first. Unpublished runs stay invisible. */
+export async function listOwnPayslips(employeeId: string) {
+  const rows = await prisma.payslip.findMany({
+    where: { employeeId, run: { status: "PUBLISHED" } },
+    include: { employee: { select: { employeeNumber: true } } },
+    orderBy: [{ year: "desc" }, { month: "desc" }],
+  });
+  return rows.map((p) => ({
+    id: p.id,
+    employeeNumber: p.employee.employeeNumber,
+    year: p.year,
+    month: p.month,
+    gross: p.gross,
+    tax: p.tax,
+    empContrib: p.empContrib,
+    net: p.net,
+    flags: p.flags,
+  }));
+}
