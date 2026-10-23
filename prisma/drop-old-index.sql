@@ -1,0 +1,1 @@
+DROP INDEX "PayrollRun_year_month_activeRun_key";

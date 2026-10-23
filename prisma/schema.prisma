@@ -1,0 +1,389 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Auth ----------
+
+enum UserRole {
+  EMPLOYEE
+  MANAGER
+  HR
+}
+
+model User {
+  id           String   @id // ulid, generated in app code
+  email        String   @unique
+  passwordHash String
+  role         UserRole
+  employee     Employee?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// ---------- Employee ----------
+
+enum EmploymentStatus {
+  FULL_TIME
+  PART_TIME
+  CONTRACT
+  INTERN
+  TERMINATED
+}
+
+model Employee {
+  id                     String           @id // ulid
+  user                   User?            @relation(fields: [userId], references: [id])
+  userId                 String?          @unique
+
+  employeeNumber         String           @unique // EMP-0001, generated in app code
+  firstName              String
+  lastName               String
+  email                  String           @unique
+  phone                  String?
+  dateOfBirth            DateTime?
+  gender                 String?
+  maritalStatus          String?
+  emergencyContactName   String?
+  emergencyContactPhone  String?
+
+  department             String?
+  jobTitle               String?
+  reportTo               Employee?        @relation("Reports", fields: [reportToId], references: [id])
+  reports                Employee[]       @relation("Reports")
+  reportToId             String?
+  hireDate               DateTime
+  workEmail              String?
+  location               String?
+  status                 EmploymentStatus @default(FULL_TIME)
+  terminatedAt           DateTime?
+
+  bankAccount            BankAccount?
+  salaryRecords          SalaryRecord[]
+  timesheetPeriods       TimesheetPeriod[]
+  leaveRequests          LeaveRequest[]
+  leaveBalances          LeaveBalance[]
+  payslips               Payslip[]
+  auditLogs              AuditLog[]
+
+  isDeletedAt            DateTime? // soft delete — only table with one
+  createdAt              DateTime   @default(now())
+  updatedAt              DateTime   @updatedAt
+}
+
+// ---------- Bank account (encrypted at rest, 1:1) ----------
+
+model BankAccount {
+  id                   String    @id // ulid
+  employee             Employee  @relation(fields: [employeeId], references: [id])
+  employeeId           String    @unique
+  bankName             String
+  accountNumberEnc     String // AES-256-GCM payload (base64 iv|ciphertext|tag)
+  accountHolderNameEnc String // AES-256-GCM payload
+  currency             String    @default("SGD")
+  isDefault            Boolean   @default(true)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+}
+
+// ---------- Salary (effective-dated, integer minor units) ----------
+
+model SalaryRecord {
+  id                 String    @id // ulid
+  employee           Employee  @relation(fields: [employeeId], references: [id])
+  employeeId         String
+  baseMonthly        Int // minor units, e.g. 500000 = 5,000.00
+  allowances         Json? // [{ code, name, amount (minor units) }]
+  standingDeductions Json? // [{ code, name, amount (minor units) }]
+  effectiveFrom      DateTime
+  effectiveTo        DateTime? // null = current
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+}
+
+// ---------- Audit log ----------
+
+model AuditLog {
+  id        String   @id // ulid
+  actorId   String // User id of who did it
+  entity    String // e.g. "Employee", "BankAccount", "SalaryRecord"
+  entityId  String
+  action    String // e.g. "STATUS_CHANGE", "SALARY_CREATE", "BANK_REVEAL"
+  before    Json?
+  after     Json?
+  createdAt DateTime @default(now())
+
+  employee  Employee? @relation(fields: [employeeIdRef], references: [id])
+  employeeIdRef String?
+}
+
+// ---------- Timesheet ----------
+
+// One row per employee × half-month. The period is a real date range, not a
+// number: an employee who joins mid-period gets a shorter range, and a
+// short month (Feb) doesn't break the 16th boundary.
+model TimesheetPeriod {
+  id            String           @id // ulid
+  employee      Employee         @relation(fields: [employeeId], references: [id])
+  employeeId    String
+  start         DateTime // local date, 00:00 UTC — e.g. the 1st or the 16th
+  end           DateTime // local date, 00:00 UTC — INCLUSIVE last day
+  status        TimesheetStatus  @default(DRAFT)
+  submittedAt   DateTime?
+  reviewedAt    DateTime?
+  reviewComment String? // manager's note, required on REJECTED
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  entries TimesheetEntry[]
+
+  @@unique([employeeId, start])
+}
+
+enum TimesheetStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED // immutable — corrections are new HR-adjusted entries, never an edit
+  REJECTED // editable again only while that half-month is still open
+}
+
+// One row = employee × period × project (or one non-project work category).
+// Hours live in a JSON grid { "2026-01-05": 8 } — decimal hours, 0.5
+// increments. JSON (not a table) on purpose: it's a form layout, not
+// relational data, and the whole grid is the unit of edit.
+model TimesheetEntry {
+  id          String          @id // ulid
+  period      TimesheetPeriod @relation(fields: [periodId], references: [id])
+  periodId    String
+  project     Project?        @relation(fields: [projectId], references: [id])
+  projectId   String?
+  // null = PROJECT_ACTIVITY (tied to a project). Otherwise a NON_PROJECT
+  // category code: TRAINING, PRE_SALE, LEAVE, ADMIN, …
+  workCategory String?
+  comment     String? // free text, editable until submission
+  hours       Json // { "2026-01-05": 8, "2026-01-08": 3.5 }
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([periodId, projectId]) // one entry per project per period
+}
+
+// Project codes (M2 keeps it minimal: code + name + active flag).
+model Project {
+  id        String   @id // ulid
+  code      String   @unique // e.g. "PRJ-001"
+  name      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  entries TimesheetEntry[]
+}
+
+// Company holiday calendar — data, HR-editable, per country/region.
+// A date is a local date at 00:00 UTC. Timesheet grids disable these
+// cells for the company's configured country; payroll treats them as
+// calendar days, not working days.
+model Holiday {
+  id      String   @id // ulid
+  country String // ISO region code, e.g. "MY"
+  date    DateTime // 00:00 UTC
+  name    String
+  createdAt DateTime @default(now())
+
+  @@unique([country, date])
+}
+
+// One active row — the knobs from SKILL.md §3.5.3.
+// `country` drives which holiday calendar applies company-wide.
+model AppConfig {
+  id                String   @id // the single row's id is always "app"
+  country           String   @default("SG") // ISO region code, e.g. "MY"
+  maxHoursPerDay    Int      @default(12)
+  standardDailyHours Int     @default(8)
+  maxOvertimePerDay Int      @default(4)
+  maxHoursPerPeriod Int      @default(176) // per half-month, full-time
+  maxBackDatedDays  Int      @default(60)
+  allowEmptySubmit  Boolean  @default(true)
+  allowHolidayWork  Boolean  @default(false) // §3.2.1
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+// ---------- M3: leave engine ───────────────────────────────────────────────
+
+model LeaveType {
+  id                 String         @id // ulid
+  code               String         @unique
+  name               String
+  entitlementDays    Float? // null = unbounded (UNPAID)
+  maxConsecutiveDays Int? // null = unlimited
+  minNoticeDays      Int            @default(0) // warn, not block
+  approvalChain      LeaveChain     @default(MANAGER)
+  allowCancellation  Boolean        @default(true)
+  isActive           Boolean        @default(true)
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  requests LeaveRequest[]
+  balances LeaveBalance[]
+}
+
+// Fixed annual entitlement per employee × type × year. No monthly accrual —
+// resets on Jan 1 (decision L1). `entitlement` is copied from the type when
+// the row is created, so later policy changes don't rewrite history.
+model LeaveBalance {
+  id          String    @id // ulid
+  employee    Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employeeId  String
+  type        LeaveType @relation(fields: [typeId], references: [id])
+  typeId      String
+  year        Int
+  entitlement Float // pro-rated once on-join for a partial first year, 0.5 steps
+
+  @@unique([employeeId, typeId, year])
+}
+
+model LeaveRequest {
+  id              String      @id // ulid
+  employee        Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employeeId      String
+  type            LeaveType   @relation(fields: [typeId], references: [id])
+  typeId          String
+  from            DateTime // 00:00 UTC, inclusive
+  to              DateTime // 00:00 UTC, inclusive
+  days            Float // 0.5 increments — stored at creation for balance math
+  reason          String?
+  status          LeaveStatus @default(PENDING)
+  decidedBy       String? // User id
+  decidedAt       DateTime?
+  decisionComment String? // required for REJECTED
+  delegatedToHr   Boolean     @default(false)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([employeeId, from, to])
+  @@index([status])
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum LeaveChain {
+  MANAGER
+  MANAGER_THEN_HR
+}
+
+// ---------- M4: payroll engine ─────────────────────────────────────────────
+
+// One row per employee × month, one line per money item.
+// Every amount is integer minor units (sen). `kind` groups lines for the
+// payslip layout: EARNED (base, allowances, bonuses) or DEDUCTED
+// (tax, contributions, standing deductions, unpaid leave).
+// `note` carries the human reason: "pro-rated 12/31 days", band breakdown,
+// "supplementary run" — never recomputed from code.
+model PayslipLine {
+  id       String  @id // ulid
+  payslip  Payslip @relation(fields: [payslipId], references: [id], onDelete: Cascade)
+  payslipId String
+  code     String // BASE, ALLOW_HOUSE, TAX, EPF_EMP, UNPAID_LEAVE, BONUS …
+  name     String
+  amount   Int // minor units, always positive; sign comes from `kind`
+  kind     PayslipLineKind
+  note     String?
+
+  @@index([payslipId])
+}
+
+enum PayslipLineKind {
+  EARNED
+  DEDUCTED
+}
+
+model Payslip {
+  id            String        @id // ulid
+  run           PayrollRun    @relation(fields: [runId], references: [id], onDelete: Cascade)
+  runId         String
+  employee      Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employeeId    String
+  year          Int
+  month         Int
+  baseMonthly   Int // minor units, from the salary record used
+  employedDays  Int
+  calendarDays  Int
+  gross         Int // minor units: earned sum − deducted sum of pre-tax lines
+  tax           Int
+  empContrib    Int
+  erContrib     Int // informational only
+  net           Int
+  flags         String? // comma codes: MISSING_APPROVAL, TERMINATED_MID_MONTH, SUPERSEDED
+  supersededBy  String? // id of the supplementary payslip, set later
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  lines PayslipLine[]
+
+  @@unique([runId, employeeId])
+  @@index([employeeId, year, month])
+}
+
+// One run per PayMonth, versioned snapshot. Idempotency is a UNIQUE index on
+// (year, month, activeRun) where activeRun = 1 for any non-VOIDED run — a
+// second non-voided run for the same month is a constraint violation, not a
+// code check.
+model PayrollRun {
+  id            String        @id // ulid
+  year          Int
+  month         Int
+  status        PayrollRunStatus @default(DRAFT)
+  preparedById  String // HR User id
+  approvedById  String? // who completed it
+  approvedAt    DateTime?
+  publishedAt   DateTime?
+  voidedAt      DateTime?
+  voidReason    String?
+  note          String? // supplementary-run reason, required when supersedes is set
+  supersededBy  String? // id of the supplementary run
+  activeRun     Int           @default(1) // 1 unless status = VOIDED
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  payslips Payslip[]
+  
+  @@index([status])
+}
+
+enum PayrollRunStatus {
+  DRAFT
+  COMPLETED
+  PUBLISHED
+  VOIDED
+}
+
+// One active row — HR-editable, versioned by `version` (each save bumps it;
+// historical runs record the version they were computed under).
+// Bands/contributions are JSON data, not code — the jurisdiction tables go in
+// here, labelled DEMO until the company confirms real values.
+model PayrollConfig {
+  id                String   @id // always "app"
+  version           Int      @default(1)
+  taxBands          Json // [{ min, max (null = ∞), rate }] — monthly gross, minor units / percent
+  contributions     Json // [{ code, name, who: EMPLOYEE|EMPLOYER|BOTH, rate, base: GROSS|BASE, capPerMonth (minor units|null), }]
+  workingDaysSat    Boolean  @default(true)
+  workingDaysSun    Boolean  @default(true)
+  rounding          String   @default("HALF_UP")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
