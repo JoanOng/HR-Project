@@ -20,15 +20,18 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
-## User & Role
-All dev users are created by the seed with the same password: **`Password123!`** (dev only — never use this in production).
+## Users & Roles
 
-Email	                | Role	        | What it's for
-hr@example.com	        | HR	        | Create and prepare payroll runs
-hr2@example.com	        | HR	        | Second HR — completes/publishes runs (a run cannot be completed by the HR who prepared it)
-manager@example.com	    | MANAGER	    | Employee EMP-0001 (Morgan Lead) — approves timesheets and leave for their direct reports
-alice@example.com	    | EMPLOYEE	    | Employee EMP-0002 (Alice Tan) — submits timesheets, requests leave, views own published payslips
-bob@example.com	        | EMPLOYEE	    | Employee EMP-0003 (Bob Ng) — same as Alice
+> [!WARNING]
+> **Dev only.** The seed creates all dev users with the same password, `Password123!`. Never use it in production.
+
+| Email                 | Role       | Employee                | What it's for                                                                                                   |
+| --------------------- | ---------- | ----------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `hr@example.com`      | `HR`       | n/a                     | Creates and prepares payroll runs                                                                               |
+| `hr2@example.com`     | `HR`       | n/a                     | Second HR: completes and publishes runs (a run can't be completed by the HR who prepared it)                    |
+| `manager@example.com` | `MANAGER`  | EMP-0001 (Morgan Lead)  | Approves timesheets and leave for their direct reports                                                          |
+| `alice@example.com`   | `EMPLOYEE` | EMP-0002 (Alice Tan)    | Submits timesheets, requests leave, views own published payslips                                                |
+| `bob@example.com`     | `EMPLOYEE` | EMP-0003 (Bob Ng)       | Same as Alice                                                                                                   |
 
 
 ## Learn More
